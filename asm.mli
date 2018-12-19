@@ -8,6 +8,9 @@ type t =
   | BIfGE of Id.t * id_or_imm * t * t * t(* 左右対称ではないので必要 *)
   | BIfFEq of Id.t * Id.t * t * t * t
   | BIfFLE of Id.t * Id.t * t * t * t
+  | While of t * t
+  | Break of Id.t
+  | Continue
 and exp =
   | Nop
   | Li of int
@@ -45,9 +48,6 @@ and exp =
   | Restore of Id.t (* スタック変数から値を復元 *)
   | ReadHp
   | AddHp of id_or_imm
-  | While of t
-  | Break of Id.t
-  | Continue
 type fundef = { name : Id.l; args : Id.t list; fargs : Id.t list; body : t; ret : Type.t }
 type prog = Prog of (Id.l * float) list * fundef list * t
 

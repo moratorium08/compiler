@@ -10,6 +10,9 @@ type t = (* 命令の列 (caml2html: sparcasm_t) *)
   | BIfGE of Id.t * id_or_imm * t * t * t(* 左右対称ではないので必要 *)
   | BIfFEq of Id.t * Id.t * t * t * t
   | BIfFLE of Id.t * Id.t * t * t * t
+  | While of t * t
+  | Break of Id.t
+  | Continue
 and exp = (* 一つ一つの命令に対応する式 (caml2html: sparcasm_exp) *)
   | Nop
   | Li of int
@@ -47,9 +50,6 @@ and exp = (* 一つ一つの命令に対応する式 (caml2html: sparcasm_exp) *
   | Restore of Id.t (* スタック変数から値を復元 (caml2html: sparcasm_restore) *)
   | ReadHp
   | AddHp of id_or_imm
-  | While of t
-  | Break of Id.t
-  | Continue
 type fundef = { name : Id.l; args : Id.t list; fargs : Id.t list; body : t; ret : Type.t }
 (* プログラム全体 = 浮動小数点数テーブル + トップレベル関数 + メインの式 (caml2html: sparcasm_prog) *)
 type prog = Prog of (Id.l * float) list * fundef list * t
@@ -82,11 +82,10 @@ let rec remove_and_uniq xs = function
 (* free variables in the order of use (for spilling) (caml2html: sparcasm_fv) *)
 let fv_id_or_imm = function V(x) -> [x] | _ -> []
 let rec fv_exp = function
-  | Continue | Nop | Li(_) | FLi(_) | SetL(_) | Comment(_) | Restore(_) | AddHp(_) | ReadHp -> []
-  | Break(x) | Mv(x) | Neg(x) | FMv(x) | FNeg(x) | FSqrt(x) | Save(x, _) -> [x]
+  | Nop | Li(_) | FLi(_) | SetL(_) | Comment(_) | Restore(_) | AddHp(_) | ReadHp -> []
+  | Mv(x) | Neg(x) | FMv(x) | FNeg(x) | FSqrt(x) | Save(x, _) -> [x]
   | Add(x, y') | Sub(x, y') | Mul(x, y') | Div(x, y') | Sll(x, y') | Lfd(x, y') | Lw(x, y') -> x :: fv_id_or_imm y'
   | Sw(x, y, z') | Stfd(x, y, z') -> x :: y :: fv_id_or_imm z'
-  | While(t) -> fv t
   | FAdd(x, y) | FSub(x, y) | FMul(x, y) | FDiv(x, y) -> [x; y]
   | IfEq(x, y', e1, e2) | IfLE(x, y', e1, e2) | IfGE(x, y', e1, e2) ->  x :: fv_id_or_imm y' @ remove_and_uniq S.empty (fv e1 @ fv e2) (* uniq here just for efficiency *)
   | IfFEq(x, y, e1, e2) | IfFLE(x, y, e1, e2) -> x :: y :: remove_and_uniq S.empty (fv e1 @ fv e2) (* uniq here just for efficiency *)
@@ -125,39 +124,45 @@ let rec print_t = function
       print_newline ();
       print_t t;
       )
-  | BIfEq(s, i, t1, t2, t) -> (print_string ("ifeq " ^ s ^ " ");
+  | BIfEq(s, i, t1, t2, t) -> (print_string ("bifeq " ^ s ^ " ");
                            print_id_or_imm i;
                            print_string (" then ");
                            print_t t1;
                            print_string (" else ");
                            print_t t2; print_string " ";
                            print_newline (); print_t t)
-  | BIfLE(s, i, t1, t2, t) -> (print_string ("ifle " ^ s ^ " ");
+  | BIfLE(s, i, t1, t2, t) -> (print_string ("bifle " ^ s ^ " ");
                            print_id_or_imm i;
                            print_string (" then ");
                            print_t t1;
                            print_string (" else ");
                             print_t t2; print_string " ";
                            print_newline (); print_t t)
-  | BIfGE(s, i, t1, t2, t) -> (print_string ("ifge " ^ s ^ " ");
+  | BIfGE(s, i, t1, t2, t) -> (print_string ("bifge " ^ s ^ " ");
                            print_id_or_imm i;
                            print_string (" then \n");
                            print_t t1;
                            print_string (" else ");
                            print_t t2; print_string " ";
                            print_newline (); print_t t)
-  | BIfFEq(s1, s2, t1, t2, t) -> (print_string ("ifeq " ^ s1 ^ " " ^ s2 ^ " ");
+  | BIfFEq(s1, s2, t1, t2, t) -> (print_string ("bifeq " ^ s1 ^ " " ^ s2 ^ " ");
                            print_string (" then ");
                            print_t t1;
                            print_string (" else ");
                            print_t t2; print_string " ";
                            print_newline (); print_t t)
-  | BIfFLE(s1, s2, t1, t2, t) -> (print_string ("ifeq " ^ s1 ^ " " ^ s2 ^ " ");
+  | BIfFLE(s1, s2, t1, t2, t) -> (print_string ("bifeq " ^ s1 ^ " " ^ s2 ^ " ");
                            print_string (" then ");
                            print_t t1;
                            print_string (" else ");
                                print_t t2; print_string " ";
                            print_newline (); print_t t)
+  | While(t, t2) -> (print_string("While {\n");
+                     print_t t;
+                     print_string "}\n";
+                     print_t t2)
+  | Break(x) -> (print_string("Break " ^ x))
+  | Continue -> (print_string("Continue"))
 and print_exp = function
   | Nop -> print_string "nop"
   | Li(n) -> (print_string "li "; print_int n)
@@ -227,9 +232,6 @@ and print_exp = function
   | ReadHp -> print_string "mv %hp"
   | AddHp(C(n)) -> (print_string "add %hp, "; print_int n)
   | AddHp(V(n)) -> (print_string ("add %hp, " ^ n))
-  | While(t) -> (print_string("While {\n"); print_t t; print_string "}\n")
-  | Break(x) -> (print_string("Break " ^ x))
-  | Continue -> (print_string("Continue"))
 
 let print_prog (Prog(fls, topfs, e)) =
   (print_string "\n(name, float) =\n";

@@ -22,7 +22,6 @@ let lexbuf outchan nml = (* バッファをコンパイルしてチャンネル�
                         tmp)))) in (* knormal.t -> knormal.t *)
   (*let tmp = Sched.f tmp in*)
   print_string "\n-----------------------------\n";
-  let _ = Asm.print_prog tmp in
   let tmp = Flow.f tmp in
   print_string "\n-----------------------------\n";
   let _ = Asm.print_prog tmp in
