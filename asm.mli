@@ -3,6 +3,11 @@ type t =
   | Ans of exp
   | Let of (Id.t * Type.t) * exp * t
   | Sbst of (Id.t * Type.t) * exp * t
+  | BIfEq of Id.t * id_or_imm * t * t * t
+  | BIfLE of Id.t * id_or_imm * t * t * t
+  | BIfGE of Id.t * id_or_imm * t * t * t(* 左右対称ではないので必要 *)
+  | BIfFEq of Id.t * Id.t * t * t * t
+  | BIfFLE of Id.t * Id.t * t * t * t
 and exp =
   | Nop
   | Li of int

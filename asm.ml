@@ -5,6 +5,11 @@ type t = (* 命令の列 (caml2html: sparcasm_t) *)
   | Ans of exp
   | Let of (Id.t * Type.t) * exp * t
   | Sbst of (Id.t * Type.t) * exp * t
+  | BIfEq of Id.t * id_or_imm * t * t * t
+  | BIfLE of Id.t * id_or_imm * t * t * t
+  | BIfGE of Id.t * id_or_imm * t * t * t(* 左右対称ではないので必要 *)
+  | BIfFEq of Id.t * Id.t * t * t * t
+  | BIfFLE of Id.t * Id.t * t * t * t
 and exp = (* 一つ一つの命令に対応する式 (caml2html: sparcasm_exp) *)
   | Nop
   | Li of int
@@ -113,6 +118,46 @@ let rec print_t = function
       print_newline ();
       print_t t;
       )
+  | Sbst((s, _), exp, t) ->
+      (print_string (s ^ " := ");
+       print_exp exp;
+       print_string ";";
+      print_newline ();
+      print_t t;
+      )
+  | BIfEq(s, i, t1, t2, t) -> (print_string ("ifeq " ^ s ^ " ");
+                           print_id_or_imm i;
+                           print_string (" then ");
+                           print_t t1;
+                           print_string (" else ");
+                           print_t t2; print_string " ";
+                           print_newline (); print_t t)
+  | BIfLE(s, i, t1, t2, t) -> (print_string ("ifle " ^ s ^ " ");
+                           print_id_or_imm i;
+                           print_string (" then ");
+                           print_t t1;
+                           print_string (" else ");
+                            print_t t2; print_string " ";
+                           print_newline (); print_t t)
+  | BIfGE(s, i, t1, t2, t) -> (print_string ("ifge " ^ s ^ " ");
+                           print_id_or_imm i;
+                           print_string (" then \n");
+                           print_t t1;
+                           print_string (" else ");
+                           print_t t2; print_string " ";
+                           print_newline (); print_t t)
+  | BIfFEq(s1, s2, t1, t2, t) -> (print_string ("ifeq " ^ s1 ^ " " ^ s2 ^ " ");
+                           print_string (" then ");
+                           print_t t1;
+                           print_string (" else ");
+                           print_t t2; print_string " ";
+                           print_newline (); print_t t)
+  | BIfFLE(s1, s2, t1, t2, t) -> (print_string ("ifeq " ^ s1 ^ " " ^ s2 ^ " ");
+                           print_string (" then ");
+                           print_t t1;
+                           print_string (" else ");
+                               print_t t2; print_string " ";
+                           print_newline (); print_t t)
 and print_exp = function
   | Nop -> print_string "nop"
   | Li(n) -> (print_string "li "; print_int n)
