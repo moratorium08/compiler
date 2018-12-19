@@ -2,6 +2,7 @@ type id_or_imm = V of Id.t | C of int
 type t =
   | Ans of exp
   | Let of (Id.t * Type.t) * exp * t
+  | Sbst of (Id.t * Type.t) * exp * t
 and exp =
   | Nop
   | Li of int
@@ -39,6 +40,9 @@ and exp =
   | Restore of Id.t (* スタック変数から値を復元 *)
   | ReadHp
   | AddHp of id_or_imm
+  | While of t
+  | Break of Id.t
+  | Continue
 type fundef = { name : Id.l; args : Id.t list; fargs : Id.t list; body : t; ret : Type.t }
 type prog = Prog of (Id.l * float) list * fundef list * t
 

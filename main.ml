@@ -15,18 +15,18 @@ let lexbuf outchan nml = (* バッファをコンパイルしてチャンネル�
   let tmp = (let a = iter !limit
                (let b = Alpha.f nml in
                 b) in a) in
-  print_string "\n-----------------------------\n";
-  let _ = KNormal.print_t tmp in
-  let tmp = Flow.f tmp in
-  print_string "\n-----------------------------\n";
-  let _ = KNormal.print_t tmp in
-  print_string "\n";
   let tmp = (Simm.f
                (Virtual.f        (* closure.prog -> asm.prog *)
                   (Typecheck.f
                      (Closure.f     (* knormal.t -> closure.prog *)
                         tmp)))) in (* knormal.t -> knormal.t *)
-  let tmp = Sched.f tmp in
+  (*let tmp = Sched.f tmp in*)
+  print_string "\n-----------------------------\n";
+  let _ = Asm.print_prog tmp in
+  let tmp = Flow.f tmp in
+  print_string "\n-----------------------------\n";
+  let _ = Asm.print_prog tmp in
+  print_string "\n";
   let prog = RegAlloc.f tmp in
   Emit.f outchan prog
 

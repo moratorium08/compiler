@@ -25,9 +25,6 @@ type t =
   | ExtArray of Id.t
   | ExtTuple of Id.t
   | ExtFunApp of Id.t * Id.t list
-  | While of t
-  | Break of Id.t
-  | Continue
 and fundef = { name : Id.t * Type.t; args : (Id.t * Type.t) list; body : t }
 
 val fv : t -> S.t

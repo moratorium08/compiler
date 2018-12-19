@@ -27,16 +27,11 @@ type t = (* K正規化後の式 (caml2html: knormal_t) *)
   | ExtArray of Id.t
   | ExtTuple of Id.t
   | ExtFunApp of Id.t * Id.t list
-  | While of t
-  | Break of Id.t
-  | Continue
 and fundef = { name : Id.t * Type.t; args : (Id.t * Type.t) list; body : t }
 
 let rec fv = function (* 式に出現する（自由な）変数 (caml2html: knormal_fv) *)
-  | Continue | Unit | Int(_) | Float(_) | ExtArray(_) | ExtTuple(_) -> S.empty
-  | While(t) ->
-    fv t
-  | Break(x) | Neg(x) | FNeg(x) -> S.singleton x
+  | Unit | Int(_) | Float(_) | ExtArray(_) | ExtTuple(_) -> S.empty
+  | Neg(x) | FNeg(x) -> S.singleton x
   | Add(x, y) | Sub(x, y) | Mul(x, y) | Div(x, y) | FAdd(x, y) | FSub(x, y) | FMul(x, y) | FDiv(x, y) | Get(x, y) -> S.of_list [x; y]
   | IfEq(x, y, e1, e2) | IfLE(x, y, e1, e2) -> S.add x (S.add y (S.union (fv e1) (fv e2)))
   | Let((x, t), e1, e2) -> S.union (fv e1) (S.remove x (fv e2))
@@ -270,6 +265,3 @@ let rec print_t nml =
                                List.iter (fun s' ->
                                    print_string (", " ^ s')) ss;
                                print_string ")")
-    | While(t) -> (print_string("While {\n"); print_t t; print_string "}\n")
-    | Break(x) -> (print_string("Break " ^ x))
-    | Continue -> (print_string("Continue"))

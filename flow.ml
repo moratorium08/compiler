@@ -1,123 +1,93 @@
-open KNormal
+open Asm
 
 let num = ref 0
 
 let gen_name () = num := (!num + 1);
     "!while!" ^ (string_of_int !num)
 
-let rec not_tail id body = match body with
-  | IfEq(x, y, t1, t2)
-  | IfLE(x, y, t1, t2) ->
-    let a = not_tail id t1 in
-    let b = not_tail id t2 in
-    a && b
-  (* let はalpha 正規系を仮定しているので、not tailな場所に
-   * let は存在していないはず *)
-  | LetRec(f, y) ->
-    let (id', _) = f.name in
-    if id = id' then
-      true
-    else
-      not_tail id y
-  | App(id', args) ->
-    print_string "hoge\n";
-    Printf.printf "%s = %s?\n" id' id;
-    not (id = id')
-  | x -> true
-
 let rec judge_loop id body = match body with
-  | IfEq(x, y, t1, t2)
-  | IfLE(x, y, t1, t2) ->
-    let a = judge_loop id t1 in
-    let b = judge_loop id t2 in
-    a && b
-  (* 実際はrecursively に関数のループを検知する必要がある
-   * が、minrtは関数内関数が無いので、とりあえず放置する*)
-  | LetRec(f, y) ->
-    let (id', _) = f.name in
-    if id = id' then
-      true
-    else
-      judge_loop id y
-  | Let((id', x), t1, t2) ->
-    (* ここクロージャで自分自身が代入される可能性が
-     * 否定できない。まぁしかしそこまで考慮すると、しんどいので
-     * 関数全体は残し、whileをApp側でinline展開するような
-     * 方針にすればいけるかなと
-     *)
-    let a = not_tail id t1 in
-    if (id' = id) then
-      a
-    else
-      let b = judge_loop id t2 in
-      a && b
-  | x -> true
+  | Sbst _ -> failwith "program error"
+  | Ans e -> true
+  | Let(_, e, t) ->
+    match e with
+      | IfEq(_, _, t1, t2)
+      | IfLE(_, _, t1, t2)
+      | IfGE(_, _, t1, t2)
+      | IfFEq(_, _, t1, t2)
+      | IfFLE(_, _, t1, t2) ->
+        let a = judge_loop id t1 in
+        let b = judge_loop id t2 in
+        let c = judge_loop id t in
+        a && b && c
+      | CallDir(id', _, _) ->
+        if id = id' then
+          false
+        else
+          judge_loop id t
+      | _ -> judge_loop id t
 
-let rec rec2while fundef body nontail = match body with
+let rec trans_t fundef x = match x with
+  | Ans e ->
+    let x = trans_exp fundef e in
+    let n = gen_name () in
+    let t = fundef.ret in
+    (match x with
+    | Continue -> Ans(Continue)
+    | x ->
+      Let((n, t), x, Ans(Break n)))
+  | Let(name, e, t) ->
+    Let(name, trans_exp fundef e, trans_t fundef t)
+  | _ -> failwith "program error"
+and trans_exp fundef e = match e with
   | IfEq(x, y, t1, t2) ->
-    let a = rec2while fundef t1 nontail in
-    let b = rec2while fundef t2 nontail in
-    IfEq(x, y, a, b)
+    let t1 = trans_t fundef t1 in
+    let t2 = trans_t fundef t2 in
+    IfEq(x, y, t1, t2)
   | IfLE(x, y, t1, t2) ->
-    let a = rec2while fundef  t1 nontail in
-    let b = rec2while fundef t2 nontail in
-    IfLE(x, y, a, b)
-  | LetRec(f, y) ->
-    let (id, _) = fundef.name in
-    let (id', _) = f.name in
-    if id = id' then
-      LetRec(f, y)
-    else
-      rec2while fundef y nontail
-  | Let((id', x), t1, t2) ->
-    let a = rec2while fundef t1 true in
-    let b = rec2while fundef t2 nontail in
-    Let((id', x), a, b)
-  | App(id, args) ->
-    let (fname, _) = fundef.name in
-    if id = fname then
-      (* update args *)
+    let t1 = trans_t fundef t1 in
+    let t2 = trans_t fundef t2 in
+    IfLE(x, y, t1, t2)
+  | IfGE(x, y, t1, t2) ->
+    let t1 = trans_t fundef t1 in
+    let t2 = trans_t fundef t2 in
+    IfGE(x, y, t1, t2)
+  | IfFEq(x, y, t1, t2) ->
+    let t1 = trans_t fundef t1 in
+    let t2 = trans_t fundef t2 in
+    IfFEq(x, y, t1, t2)
+  | IfFLE(x, y, t1, t2) ->
+    let t1 = trans_t fundef t1 in
+    let t2 = trans_t fundef t2 in
+    IfFLE(x, y, t1, t2)
+  (* judgeを先にしておき、以下のCalldirでl = idとなるのは、末尾であることが
+   * 保証されている *)
+  | CallDir(l, iargs, fargs) ->
+    if l = fundef.name then
       Continue
     else
-      App(id, args)
-  | x when nontail ->
-    x
-  | x ->
-    let (_, t) = fundef.name in
-    let n = gen_name () in
-    let t = Type.return_type t in
-    Let((n, t), x, Break n)
+      e
+  | x -> x
 
 let rec trans2while fundef =
-  let body = rec2while fundef fundef.body false in
+  let body = trans_t fundef fundef.body in
   (* TODO: args *)
-  let w = While body in
-  {body=w; name=fundef.name; args=fundef.args}
+  let w = Ans(While body) in
+  {body=w; name=fundef.name; args=fundef.args; fargs=fundef.fargs; ret=fundef.ret}
 
 let rec trans fundef =
-  let (id, _) = fundef.name in
+  let id = fundef.name in
   let body = fundef.body in
   if judge_loop id body then
     trans2while fundef
   else
-    {body=body; name=fundef.name; args=fundef.args}
-
-let rec find_fun x = match x with
-  | LetRec(f, y) ->
-    LetRec(trans f, y)
-  | IfEq(x, y, t1, t2)
-  | IfLE(x, y, t1, t2) ->
-    let t1 = find_fun t1 in
-    let t2 = find_fun t2 in
-    IfLE(x, y, t1, t2)
-  | Let (x, t1, t2) ->
-    let t1 = find_fun t1 in
-    let t2 = find_fun t2 in
-    Let(x, t1, t2)
-  | LetTuple(l, x, t) ->
-    let t = find_fun t in
-    LetTuple(l, x, t)
-  | e -> e
+    fundef
 
 let rec f e =
-  find_fun e
+  let Prog(l, funs, top) = e in
+  let rec loop fundefs = match fundefs with
+    | [] -> []
+    | fundef::xs ->
+      (trans fundef) :: loop xs
+  in
+  let fundefs = loop funs in
+  Prog(l, fundefs, top)
