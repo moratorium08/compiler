@@ -27,11 +27,16 @@ type t = (* K正規化後の式 (caml2html: knormal_t) *)
   | ExtArray of Id.t
   | ExtTuple of Id.t
   | ExtFunApp of Id.t * Id.t list
+  | While of t
+  | Break of Id.t
+  | Continue
 and fundef = { name : Id.t * Type.t; args : (Id.t * Type.t) list; body : t }
 
 let rec fv = function (* 式に出現する（自由な）変数 (caml2html: knormal_fv) *)
-  | Unit | Int(_) | Float(_) | ExtArray(_) | ExtTuple(_) -> S.empty
-  | Neg(x) | FNeg(x) -> S.singleton x
+  | Continue | Unit | Int(_) | Float(_) | ExtArray(_) | ExtTuple(_) -> S.empty
+  | While(t) ->
+    fv t
+  | Break(x) | Neg(x) | FNeg(x) -> S.singleton x
   | Add(x, y) | Sub(x, y) | Mul(x, y) | Div(x, y) | FAdd(x, y) | FSub(x, y) | FMul(x, y) | FDiv(x, y) | Get(x, y) -> S.of_list [x; y]
   | IfEq(x, y, e1, e2) | IfLE(x, y, e1, e2) -> S.add x (S.add y (S.union (fv e1) (fv e2)))
   | Let((x, t), e1, e2) -> S.union (fv e1) (S.remove x (fv e2))
@@ -216,30 +221,38 @@ let rec print_t nml =
     | FSub (s1, s2) -> print_string (s1 ^ " -. " ^ s2)
     | FMul (s1, s2) -> print_string (s1 ^ " *. " ^ s2)
     | FDiv (s1, s2) -> print_string (s1 ^ " /. " ^ s2)
-    | IfEq (s1, s2, t1, t2) -> (print_string ("IF " ^ s1 ^ " = " ^ s2 ^ " THEN ");
+    | IfEq (s1, s2, t1, t2) -> (print_string ("IF " ^ s1 ^ " = " ^ s2 ^ " THEN\n");
                                 print_t t1;
+                                print_newline ();
                                 print_string " ELSE ";
-                                print_t t2)
+                                print_t t2;
+                                print_newline ()
+                               )
     | IfLE (s1, s2, t1, t2) -> (print_string ("IF " ^ s1 ^ " <= " ^ s2 ^ " THEN ");
                                 print_t t1;
+                                print_newline ();
                                 print_string " ELSE ";
-                                print_t t2)
+                                print_t t2;
+                                print_newline ()
+                               )
     | Let ((s, _), t2, t3) -> (print_string ("LET " ^ s ^ " = ");
                                print_t t2;
                                print_string " IN ";
-                               print_t t3)
+                               print_newline ();
+                               print_t t3
+                              )
     | Var s -> print_string ("VAR " ^ s)
     | LetRec (fd, t) -> (print_string ("LET REC " ^ (fst fd.name) ^ "(" ^ (fst (List.hd fd.args)));
                          List.iter (fun (s, _) ->
                             print_string (", " ^ s)) (List.tl fd.args);
-                         print_string ") = ";
+                         print_string ") = \n";
                          print_t fd.body;
                          print_string " IN ";
                          print_t t)
     | App (s1, s2::ss) -> (print_string (s1 ^ "(" ^ s2);
                            List.iter (fun s' ->
                                print_string (", " ^ s')) ss;
-                           print_string ")")
+                           print_string ")\n")
     | Tuple (s::ss, _) -> (print_string ("(" ^ s);
                         List.iter (fun s' ->
                             print_string (", " ^ s')) ss;
@@ -257,3 +270,6 @@ let rec print_t nml =
                                List.iter (fun s' ->
                                    print_string (", " ^ s')) ss;
                                print_string ")")
+    | While(t) -> (print_string("While {\n"); print_t t; print_string "}\n")
+    | Break(x) -> (print_string("Break " ^ x))
+    | Continue -> (print_string("Continue"))

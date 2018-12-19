@@ -8,6 +8,10 @@ type t = (* MinCamlの型を表現するデータ型 (caml2html: type_t) *)
   | Array of t
   | Var of t option ref
 
+let return_type t = match t with
+  | Fun(_, t) -> t
+  | _ -> failwith "this is not function"
+
 let gentyp () = Var(ref None) (* 新しい型変数を作る *)
 
 let rec print_t = function
