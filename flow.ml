@@ -146,13 +146,35 @@ let rec trans fundef =
   else
     fundef
 
-type node = {id: int; block: t option ref; children: node list ref}
+type node_typ =
+  | NIfEq of node * node * node
+  | IfLE of node * node * node
+  | IfGE of node * node * node
+  | IfFEq of node * node * node
+  | IfFLE of node * node * node
+  | While of node * node
+  | Break
+  | Continue
+and node = {id: int;
+             block: t option ref;
+             children: node_typ;
+             parents: node list ref;
+             avails: node list ref;
+             kills: node list ref;
+             defs: node list ref
+            }
 
 let node_num = ref 0
 
-let new_node () =
+let new_node typ  =
   node_num := !node_num + 1;
-  {id = !node_num; block=ref None; children=ref []}
+  {id = !node_num;
+   block=ref None;
+   children=typ;
+   parents=ref [];
+   avails=ref [];
+   kills=ref [];
+   defs=ref []}
 
 (* graph, cont *)
 let rec cut e = match e with
@@ -175,22 +197,24 @@ let rec cut e = match e with
     (Ans(Nop), Some(e))
 
 (* cur: ref node of current while loop *)
-let rec gen_cfg t cur_top cur_next node =
+let rec gen_cfg t cur_top cur_next node nodes =
   let (block, cont) = cut t in
   node.block := Some(block);
   match cont with
   | None ->
-    ()
+    nodes
   | Some(While(t1, t2)) ->
     let top = new_node () in
     let next = new_node () in
     node.children := [top];
-    gen_cfg t1 top next top;
-    gen_cfg t2 cur_top cur_next next
+    let nodes = gen_cfg t1 top next top (top :: next :: nodes) in
+    gen_cfg t2 cur_top cur_next next nodes
   | Some(Break (_)) ->
-    node.children := [cur_next]
+    node.children := [cur_next];
+    nodes
   | Some(Continue) ->
-    node.children := [cur_top]
+    node.children := [cur_top];
+    nodes
   | Some(BIfEq(_, _, t1, t2, t3))
   | Some(BIfLE(_, _, t1, t2, t3))
   | Some(BIfGE(_, _, t1, t2, t3))
@@ -202,9 +226,9 @@ let rec gen_cfg t cur_top cur_next node =
     n1.children := [n3];
     n2.children := [n3];
     node.children := [n1; n2];
-    gen_cfg t1 cur_top cur_next n1;
-    gen_cfg t2 cur_top cur_next n2;
-    gen_cfg t3 cur_top cur_next n3
+    let nodes = gen_cfg t1 cur_top cur_next n1 (n1 :: n2 :: n3 :: nodes) in
+    let nodes = gen_cfg t2 cur_top cur_next n2 nodes in
+    gen_cfg t3 cur_top cur_next n3 nodes
   | _ -> failwith "program error"
 
 let rec print_cfg e printed =
@@ -230,7 +254,36 @@ let rec print_cfg e printed =
   in
   loop !(e.children) printed
 
-let rec f e =
+let rec edef env block = match block with
+  | Let((x, _), _, t)
+  | Sbst((x, _), _, t) ->
+    let env = M.add x block env in
+    edef env t
+  | Ans(_) ->
+    env
+  | _ -> failwith "program error (def)"
+
+let rec ekill e result envs = match e with
+ | Let((x, _), _, t)
+ | Sbst((x, _), _, t) ->
+   let rec loop envs = match envs with
+     | [] -> []
+     | env::xs ->
+       if M.mem x env then
+         (M.find x env) :: (loop xs)
+       else
+         loop xs
+   in
+   let result = loop envs in
+   ekill t result envs
+  | Ans(_) ->
+    result
+  | _ -> failwith "program error (kill)"
+
+let rec gen_avail nodes =
+
+
+let rec g e =
   let Prog(l, funs, top) = e in
   let rec loop fundefs = match fundefs with
     | [] -> []
@@ -239,9 +292,16 @@ let rec f e =
       let dummy1 = new_node () in
       let dummy2 = new_node () in
       let top = new_node () in
-      let _ = gen_cfg x.body dummy1 dummy2 top in
+      let nodes = gen_cfg x.body dummy1 dummy2 top [] in
       let _ = print_cfg top [] in
       (trans fundef) :: loop xs
   in
   let fundefs = loop funs in
   Prog(l, fundefs, top)
+
+let f e = g e
+  (*let Prog(l, funs, top) = g e in
+  let rec loop fundefs = match fundefs with
+    | [] -> []
+    | fundef::xs ->*)
+
