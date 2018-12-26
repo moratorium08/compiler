@@ -256,6 +256,17 @@ let rec gen_cfg t cur_top cur_next node nodes =
     gen_cfg t3 cur_top cur_next n3 nodes
   | _ -> failwith "program error"
 
+let rec print_node_exps_loop s = match s with
+  | [] -> ()
+  | x::xs ->
+    (match x.asm with
+    | Let ((id, _), _, _)
+    | Sbst((id, _), _, _) ->
+      Printf.printf "id: %d %s\n" x.exp_id id
+    | _ -> ());
+    (*print_t x.asm;*)
+    print_node_exps_loop xs
+
 let rec print_cfg e printed =
   let block = !(e.block) in
   let printed =
@@ -273,6 +284,26 @@ let rec print_cfg e printed =
     | NContinue-> print_string "continue "
     |_ -> ());
     print_t b;
+    (*let rec loop hoge = match hoge with
+      | [] -> ()
+      | x::xs ->
+        match !(e.block) with
+        | Some(block) ->
+          print_t block;
+          print_newline ()
+        | None -> ()
+    in
+    print_string "\n---------\n";
+    loop !(e.parents);
+    print_string "\n---------\n";*)
+    print_string "----defs!----\n";
+    print_node_exps_loop (SEXP.elements !(e.defs));
+    print_string "----kills!----\n";
+    print_node_exps_loop (SEXP.elements !(e.kills));
+    print_string "----reach!----\n";
+    print_node_exps_loop (SEXP.elements !(e.in_set));
+    print_string "----outset!----\n";
+    print_node_exps_loop (SEXP.elements !(e.out_set));
     Printf.printf "\"];\n";
     e.id :: printed)
   | None -> printed) in
@@ -292,7 +323,7 @@ let rec print_cfg e printed =
 let rec edef env block = match block with
   | Let((x, _), _, t)
   | Sbst((x, _), _, t) ->
-    let env = M.add x block env in
+    let env = M.add x (new_node_exp block) env in
     edef env t
   | Ans(_) ->
     env
@@ -302,10 +333,10 @@ let rec ekill e result envs = match e with
  | Let((x, _), _, t)
  | Sbst((x, _), _, t) ->
    let rec loop envs = match envs with
-     | [] -> []
+     | [] -> result
      | env::xs ->
        if M.mem x env then
-         (new_node_exp(M.find x env)) :: (loop xs)
+         (M.find x env) :: (loop xs)
        else
          loop xs
    in
@@ -323,9 +354,9 @@ let rec gen_def_kill nodes =
       |Some(block) ->
         let env = edef M.empty block in
         node.defs :=
-          SEXP.of_list (M.fold (fun k x l -> (new_node_exp x)::l) env []);
+          SEXP.of_list (M.fold (fun k x l -> x::l) env []);
         env :: (loop xs)
-      | None -> failwith "program error(gen_def_kill"
+      | None -> failwith "program error(gen_def_kill)"
   in
   let envs = loop nodes in
   let rec loop2 nodes = match nodes with
@@ -334,7 +365,8 @@ let rec gen_def_kill nodes =
     match !(node.block) with
     | Some(e) ->
       let kills = ekill e [] envs in
-      node.kills := SEXP.of_list kills
+      node.kills := SEXP.of_list kills;
+      loop2 xs
     | None ->
       failwith "program error(gen_def)"
   in
@@ -346,23 +378,34 @@ let rec gen_avail top nodes =
 
   let rec gen_in_set parents = match parents with
     | [] -> SEXP.empty
-    | [x] -> !(x.out_set)
+    (*| [x] -> !(x.out_set)*)
     | x::xs ->
       let set = gen_in_set xs in
       let set' = !(x.out_set) in
-      SEXP.inter set set'
+      SEXP.union set set'
   in
   let rec iter_nodes nodes changed = match nodes with
     | [] -> changed
     | node::xs ->
       let in_n = gen_in_set !(node.parents) in
-      let x = !(node.in_set) != in_n in
+      let x = !(node.in_set) <> in_n in
       node.in_set := in_n;
       let out_n =
         SEXP.union !(node.defs) (
           SEXP.diff !(node.in_set) !(node.kills)
         ) in
-      let y = !(node.out_set) != out_n in
+      let y = !(node.out_set) <> out_n in
+      if y then
+        (print_int node.id;
+         print_string "\n";
+         print_node_exps_loop (SEXP.elements out_n);
+         print_string "\n";
+         print_node_exps_loop (SEXP.elements !(node.out_set))
+        )
+      else
+        ()
+      ;
+      print_string "\n\n";
       node.out_set := out_n;
       iter_nodes xs (changed || x || y)
   in
@@ -383,9 +426,9 @@ let rec g e =
       let dummy1 = new_node NNone in
       let dummy2 = new_node NNone in
       let top = new_node NNone in
-      let nodes = gen_cfg x.body dummy1 dummy2 top [] in
-      let _ = print_cfg top [] in
+      let nodes = gen_cfg x.body dummy1 dummy2 top [top] in
       let _ = gen_avail top nodes in
+      let _ = print_cfg top [] in
       (trans fundef) :: loop xs
   in
   let fundefs = loop funs in
