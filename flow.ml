@@ -127,6 +127,9 @@ let rec trans fundef =
   else
     fundef
 
+
+let exp_num = ref 0
+
 type node_typ =
   | NIfEq of Id.t * id_or_imm
   | NIfLE  of Id.t * id_or_imm
@@ -134,19 +137,35 @@ type node_typ =
   | NIfFEq  of Id.t * Id.t
   | NIfFLE  of Id.t * Id.t
   | NWhile | NBreak | NContinue | NNone
-type node = {id: int;
-             block: t option ref;
-             children: node list ref;
-             parents: node list ref;
-             avails: t list ref;
-             kills: t list ref;
-             defs: t list ref;
-             in_set: t list ref;
-             out_set: t list ref;
-             typ: node_typ ref
-            }
+
+type node_exp = {
+  asm: t;
+  exp_id: int
+}
+
+module SEXP = Set.Make(struct type t = node_exp let compare = compare end)
+type node =
+  {id: int;
+   block: t option ref;
+   children: node list ref;
+   parents: node list ref;
+   avails: node_exp list ref;
+   kills: SEXP.t ref;
+   defs: SEXP.t ref;
+   in_set: SEXP.t ref;
+   out_set: SEXP.t ref;
+   typ: node_typ ref
+  }
 
 let node_num = ref 0
+
+let new_node_exp asm =
+  exp_num := !exp_num + 1;
+  {
+    asm = asm;
+    exp_id = !exp_num;
+  }
+
 
 let new_node typ =
   node_num := !node_num + 1;
@@ -156,10 +175,10 @@ let new_node typ =
    parents=ref [];
    typ=ref typ;
    avails=ref [];
-   kills=ref [];
-   defs=ref [];
-   in_set=ref [];
-   out_set=ref []}
+   kills=ref SEXP.empty;
+   defs=ref SEXP.empty;
+   in_set=ref SEXP.empty;
+   out_set=ref SEXP.empty}
 
 (* graph, cont *)
 let rec cut e = match e with
@@ -286,7 +305,7 @@ let rec ekill e result envs = match e with
      | [] -> []
      | env::xs ->
        if M.mem x env then
-         (M.find x env) :: (loop xs)
+         (new_node_exp(M.find x env)) :: (loop xs)
        else
          loop xs
    in
@@ -303,7 +322,8 @@ let rec gen_def_kill nodes =
       match !(node.block) with
       |Some(block) ->
         let env = edef M.empty block in
-        node.defs := M.fold (fun k x l -> x::l) env [];
+        node.defs :=
+          SEXP.of_list (M.fold (fun k x l -> (new_node_exp x)::l) env []);
         env :: (loop xs)
       | None -> failwith "program error(gen_def_kill"
   in
@@ -314,23 +334,45 @@ let rec gen_def_kill nodes =
     match !(node.block) with
     | Some(e) ->
       let kills = ekill e [] envs in
-      node.kills := kills
+      node.kills := SEXP.of_list kills
     | None ->
       failwith "program error(gen_def)"
   in
   loop2 nodes
 
+
 let rec gen_avail top nodes =
   gen_def_kill nodes;
 
-  let rec gen_in_set parents set = match parents
-
-  let rec iter_nodes nodes = match nodes with
-    | [] -> ()
+  let rec gen_in_set parents = match parents with
+    | [] -> SEXP.empty
+    | [x] -> !(x.out_set)
     | x::xs ->
+      let set = gen_in_set xs in
+      let set' = !(x.out_set) in
+      SEXP.inter set set'
+  in
+  let rec iter_nodes nodes changed = match nodes with
+    | [] -> changed
+    | node::xs ->
+      let in_n = gen_in_set !(node.parents) in
+      let x = !(node.in_set) != in_n in
+      node.in_set := in_n;
+      let out_n =
+        SEXP.union !(node.defs) (
+          SEXP.diff !(node.in_set) !(node.kills)
+        ) in
+      let y = !(node.out_set) != out_n in
+      node.out_set := out_n;
+      iter_nodes xs (changed || x || y)
+  in
+  let rec loop nodes =
+    if iter_nodes nodes false then
+      loop nodes
+    else
       ()
   in
-
+  loop nodes
 
 let rec g e =
   let Prog(l, funs, top) = e in
@@ -343,6 +385,7 @@ let rec g e =
       let top = new_node NNone in
       let nodes = gen_cfg x.body dummy1 dummy2 top [] in
       let _ = print_cfg top [] in
+      let _ = gen_avail top nodes in
       (trans fundef) :: loop xs
   in
   let fundefs = loop funs in
