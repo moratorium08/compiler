@@ -158,9 +158,27 @@ let rec is_break_path e =
   | Break(_) -> true
   | Continue -> false
   | _ -> print_string "error\n"; print_t e;print_newline (); failwith "program error (is_break_path)"
-(*
-let rec handle_for_cont cont next = (* *)
-   *)
+
+let rec append_body body1 body2 = match body1 with
+  | Ans(Nop) ->
+    body2
+  | Let (x, y, e) ->
+    Let(x, y, (append_body e body2))
+  | Sbst (x, y, e) ->
+    Sbst(x, y, (append_body e body2))
+  | _ -> failwith "program error(double body)"
+
+
+let handle_for body =
+  let rec remove_break body = match body with
+    | Break(x) -> Ans(Mv(x))
+    | Let (x, y, e) ->
+      Let(x, y, (remove_break e))
+    | Sbst (x, y, e) ->
+      Sbst(x, y, (remove_break e))
+    | _ -> failwith "program error(remove_break)"
+  in
+  remove_break body
 
 let rec trans2for id body env = match body with
   | Sbst ((x, t), e, cont) when x = id ->
@@ -204,15 +222,6 @@ let rec trans2for id body env = match body with
     (Ans(Nop), Ans(Nop), (fun t1 t2 t3 -> Ans(Nop)), Ans(Nop), "")
   | _ -> failwith "program error(trans2for)"
 
-let rec append_body body1 body2 = match body1 with
-  | Ans(Nop) ->
-    body2
-  | Let (x, y, e) ->
-    Let(x, y, (append_body e body2))
-  | Sbst (x, y, e) ->
-    Sbst(x, y, (append_body e body2))
-  | _ -> failwith "program error(double body)"
-
 
 let unroll forbody =
   match forbody with
@@ -231,7 +240,7 @@ let rec trans2while fundef =
   let body = (match check_for_availability fundef body with
   | Some(id) ->
     let (body, update, cond, cont, _) = trans2for id body M.empty in
-    let forbody = cond update body cont in
+    let forbody = cond update body (handle_for cont) in
     unroll forbody
   | None ->
     let rec loop args = match args with
@@ -247,6 +256,7 @@ let rec trans2while fundef =
     let w = loop2 fundef.fargs in
     w
   ) in
+    print_t body;
     {body=body; name=fundef.name; args=fundef.args; fargs=fundef.fargs; ret=fundef.ret}
 
 let rec trans fundef =
