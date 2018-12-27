@@ -106,36 +106,39 @@ and trans_if e name cont fundef tail = match e with
 and trans_exp fundef e tail  = match e with
   | x -> x
 
-let rec is_inductive id body changed if_visited = match body with
-  | Ans(_) -> not changed
+let rec is_inductive id body changed if_visited env =
+  match body with
+  | Continue | Ans(_) ->
+    changed
+  | Break(_) -> true
   | Sbst ((x, _), e, cont) ->
     if x = id then
-      if is_inductive_exp id e then
-        is_inductive id cont true if_visited
+      if is_inductive_exp id e env then
+        is_inductive id cont true if_visited env
       else
-        (print_string "here\n\n";
-        false)
+        false
     else
-        is_inductive id cont changed if_visited
+        is_inductive id cont changed if_visited env
   | BIfLE (x, C(_), t1, t2, Ans(Nop))
   | BIfGE (x, C(_), t1, t2, Ans(Nop)) ->
-    let b1 = is_inductive id t1 changed true in
-    let b2 = is_inductive id t2 changed true in
+    let b1 = is_inductive id t1 changed true env in
+    let b2 = is_inductive id t2 changed true env in
     b1 && b2
-  | Let(_, _, t) ->
-    is_inductive id t changed if_visited
-  | _ -> print_string "nekonkeko\n"; false
-and is_inductive_exp id e = match e with
+  | Let((x,_), exp, t) ->
+    is_inductive id t changed if_visited (M.add x exp env)
+  | _ -> false
+and is_inductive_exp id e env = match e with
   | Add(x, C(_)) when x = id -> true
   | Sub(x, C(_)) when x = id -> true
-  | _ -> print_string "not mv\n\n"; false
+  | Mv y when M.mem y env ->
+    is_inductive_exp id (M.find y env) env
+  | _ -> false
 
-let check_for_availability fundef =
-  let body = fundef.body in
+let check_for_availability fundef body =
   let rec loop args = match args with
     | [] -> None
     | id::xs ->
-      if is_inductive id body false false then
+      if is_inductive id body false false M.empty then
         Some(id)
       else
         loop xs
@@ -155,43 +158,60 @@ let rec is_break_path e =
   | Break(_) -> true
   | Continue -> false
   | _ -> print_string "error\n"; print_t e;print_newline (); failwith "program error (is_break_path)"
+(*
+let rec handle_for_cont cont next = (* *)
+   *)
 
-let rec trans2for id body = match body with
+let rec trans2for id body env = match body with
   | Sbst ((x, t), e, cont) when x = id ->
-    let (body', update, cond, cont) = trans2for id cont in
-    (body', Sbst((x, t), e, Ans(Nop)), cond, cont)
+    let e = match e with
+      | Mv(y) when M.mem y env ->
+        M.find y env
+      | e -> e
+    in
+    let (body', update, cond, cont, remove) = trans2for id cont env in
+    (body', Sbst((x, t), e, Ans(Nop)), cond, cont, x)
   | BIfLE (x, C(y), t1, t2, _) ->
     if is_break_path t1 then
-      let (body', update, _, _) = trans2for id t2 in
-      (body', update, (fun t1 t2 t3 -> ForLE(true, x, y, t1, t2, t3)), t1)
+      let (body', update, _, _, remove) = trans2for id t2 env in
+      (body', update, (fun t1 t2 t3 -> ForLE(true, x, y, t1, t2, t3)), t1,
+       remove)
     else
-      let (body', update, _, _) = trans2for id t1 in
-      (body', update, (fun t1 t2 t3 -> ForLE(false, x, y, t1, t2, t3)), t2)
+      let (body', update, _, _, remove) = trans2for id t1 env in
+      (body', update, (fun t1 t2 t3 -> ForLE(false, x, y, t1, t2, t3)), t2,
+       remove)
   | BIfGE (x, C(y), t1, t2, _) ->
     if is_break_path t1 then
-      let (body', update, _, _) = trans2for id t2 in
-      (body', update, (fun t1 t2 t3 -> ForGE(true, x, y, t1, t2, t3)), t1)
+      let (body', update, _, _, remove) = trans2for id t2 env in
+      (body', update, (fun t1 t2 t3 -> ForGE(true, x, y, t1, t2, t3)), t1,
+       remove)
     else
-      let (body', update, _, _) = trans2for id t1 in
-      (body', update, (fun t1 t2 t3 -> ForGE(false, x, y, t1, t2, t3)), t2)
-  | Let (x, y, t) ->
-    let (body', update, cond, cont) = trans2for id t in
-    (Let(x, y, body'), update, cond, cont)
+      let (body', update, _, _, remove) = trans2for id t1 env in
+      (body', update, (fun t1 t2 t3 -> ForGE(false, x, y, t1, t2, t3)), t2,
+       remove)
+  | Let ((x, ty), y, t) ->
+    let (body', update, cond, cont, remove) = trans2for id t (M.add x y env) in
+    if remove = x then
+      (body', update, cond, cont, remove)
+    else
+      (Let((x, ty), y, body'), update, cond, cont, remove)
   | Sbst (x, y, t) ->
-    let (body', update, cond, cont) = trans2for id t in
-    (Sbst(x, y, body'), update, cond, cont)
-  | Ans (_) | Break(_) | Continue ->
-    (body, Ans(Nop), (fun t1 t2 t3 -> Ans(Nop)), Ans(Nop))
+    let (body', update, cond, cont, remove) = trans2for id t env in
+    (Sbst(x, y, body'), update, cond, cont, remove)
+  | Ans (_) ->
+    (body, Ans(Nop), (fun t1 t2 t3 -> Ans(Nop)), Ans(Nop), "")
+  | Break(_) | Continue ->
+    (Ans(Nop), Ans(Nop), (fun t1 t2 t3 -> Ans(Nop)), Ans(Nop), "")
   | _ -> failwith "program error(trans2for)"
 
 let rec trans2while fundef =
   let body = trans_t fundef fundef.body true None in
   print_t body;
   print_string "\n";
-  let body = (match check_for_availability fundef with
+  let body = (match check_for_availability fundef body with
   | Some(id) ->
     Printf.printf "inductive: %s\n" id;
-    let (body, update, cond, cont) = trans2for id body in
+    let (body, update, cond, cont, _) = trans2for id body M.empty in
     cond update body cont
   | None ->
     let rec loop args = match args with
@@ -505,6 +525,7 @@ let rec gen_avail top nodes =
       ()
   in
   loop nodes
+
 
 
 let rec g e =
