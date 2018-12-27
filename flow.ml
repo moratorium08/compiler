@@ -204,15 +204,35 @@ let rec trans2for id body env = match body with
     (Ans(Nop), Ans(Nop), (fun t1 t2 t3 -> Ans(Nop)), Ans(Nop), "")
   | _ -> failwith "program error(trans2for)"
 
+let rec append_body body1 body2 = match body1 with
+  | Ans(Nop) ->
+    body2
+  | Let (x, y, e) ->
+    Let(x, y, (append_body e body2))
+  | Sbst (x, y, e) ->
+    Sbst(x, y, (append_body e body2))
+  | _ -> failwith "program error(double body)"
+
+
+let unroll forbody =
+  match forbody with
+  | ForLE(nt, x, v, update, body, cont) ->
+    let body' = append_body(append_body body update) body in
+    let v = if nt then v + 1 else v - 1 in
+    ForLE(nt, x, v, update, body', append_body body cont)
+  | ForGE(nt, x, v, update, body, cont) ->
+    let body' = append_body(append_body body update) body in
+    let v = if nt then v - 1 else v + 1 in
+    ForGE(nt, x, v, update, body', append_body body cont)
+  | _ -> failwith "program error(unroll)"
+
 let rec trans2while fundef =
   let body = trans_t fundef fundef.body true None in
-  print_t body;
-  print_string "\n";
   let body = (match check_for_availability fundef body with
   | Some(id) ->
-    Printf.printf "inductive: %s\n" id;
     let (body, update, cond, cont, _) = trans2for id body M.empty in
-    cond update body cont
+    let forbody = cond update body cont in
+    unroll forbody
   | None ->
     let rec loop args = match args with
       | [] -> While (body, Ans(Nop))
