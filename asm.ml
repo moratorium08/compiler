@@ -1,6 +1,7 @@
 (* PowerPC assembly with a few virtual instructions *)
 
 type id_or_imm = V of Id.t | C of int
+
 type t = (* 命令の列 (caml2html: sparcasm_t) *)
   | Ans of exp
   | Let of (Id.t * Type.t) * exp * t
@@ -11,6 +12,8 @@ type t = (* 命令の列 (caml2html: sparcasm_t) *)
   | BIfFEq of Id.t * Id.t * t * t * t
   | BIfFLE of Id.t * Id.t * t * t * t
   | While of t * t
+  | ForLE of bool * Id.t * int * t * t * t (* not / x / const / update loop body / cont *)
+  | ForGE of bool * Id.t * int * t * t * t (* for (;not x < const; update) {loop_body); cont *)
   | Break of Id.t
   | Continue
 and exp = (* 一つ一つの命令に対応する式 (caml2html: sparcasm_exp) *)
@@ -163,6 +166,24 @@ let rec print_t = function
                      print_t t2)
   | Break(x) -> (print_string("Break " ^ x))
   | Continue -> (print_string("Continue"))
+  | ForLE(nt, x, v, update, body, cont) ->
+    let nt = if nt then "not" else "" in
+    (Printf.printf "for (; %s (%s <= %d);" nt x v;
+     print_t update;
+     print_string ") {\n";
+     print_t body;
+     print_string "\n}\n";
+     print_t cont
+    )
+  | ForGE(nt, x, v, update, body, cont) ->
+    let nt = if nt then "not" else "" in
+    (Printf.printf "for (; %s (%s >= %d);" nt x v;
+     print_t update;
+     print_string ") {\n";
+     print_t body;
+     print_string "\n}\n";
+     print_t cont
+    )
 and print_exp = function
   | Nop -> print_string "nop"
   | Li(n) -> (print_string "li "; print_int n)

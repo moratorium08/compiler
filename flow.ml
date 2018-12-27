@@ -1,5 +1,7 @@
 open Asm
 
+let unroll_size = 3
+
 let num = ref 0
 
 let gen_name () = num := (!num + 1);
@@ -104,20 +106,108 @@ and trans_if e name cont fundef tail = match e with
 and trans_exp fundef e tail  = match e with
   | x -> x
 
+let rec is_inductive id body changed if_visited = match body with
+  | Ans(_) -> not changed
+  | Sbst ((x, _), e, cont) ->
+    if x = id then
+      if is_inductive_exp id e then
+        is_inductive id cont true if_visited
+      else
+        (print_string "here\n\n";
+        false)
+    else
+        is_inductive id cont changed if_visited
+  | BIfLE (x, C(_), t1, t2, Ans(Nop))
+  | BIfGE (x, C(_), t1, t2, Ans(Nop)) ->
+    let b1 = is_inductive id t1 changed true in
+    let b2 = is_inductive id t2 changed true in
+    b1 && b2
+  | Let(_, _, t) ->
+    is_inductive id t changed if_visited
+  | _ -> print_string "nekonkeko\n"; false
+and is_inductive_exp id e = match e with
+  | Add(x, C(_)) when x = id -> true
+  | Sub(x, C(_)) when x = id -> true
+  | _ -> print_string "not mv\n\n"; false
+
+let check_for_availability fundef =
+  let body = fundef.body in
+  let rec loop args = match args with
+    | [] -> None
+    | id::xs ->
+      if is_inductive id body false false then
+        Some(id)
+      else
+        loop xs
+  in
+  match loop fundef.args with
+  | None ->
+    loop fundef.fargs
+  | x -> x
+
+let rec is_break_path e =
+  print_t e;
+  print_newline ();
+  print_newline ();
+  match e with
+  | Let (_, _, e)
+  | Sbst (_, _, e) -> is_break_path e
+  | Break(_) -> true
+  | Continue -> false
+  | _ -> print_string "error\n"; print_t e;print_newline (); failwith "program error (is_break_path)"
+
+let rec trans2for id body = match body with
+  | Sbst ((x, t), e, cont) when x = id ->
+    let (body', update, cond, cont) = trans2for id cont in
+    (body', Sbst((x, t), e, Ans(Nop)), cond, cont)
+  | BIfLE (x, C(y), t1, t2, _) ->
+    if is_break_path t1 then
+      let (body', update, _, _) = trans2for id t2 in
+      (body', update, (fun t1 t2 t3 -> ForLE(true, x, y, t1, t2, t3)), t1)
+    else
+      let (body', update, _, _) = trans2for id t1 in
+      (body', update, (fun t1 t2 t3 -> ForLE(false, x, y, t1, t2, t3)), t2)
+  | BIfGE (x, C(y), t1, t2, _) ->
+    if is_break_path t1 then
+      let (body', update, _, _) = trans2for id t2 in
+      (body', update, (fun t1 t2 t3 -> ForGE(true, x, y, t1, t2, t3)), t1)
+    else
+      let (body', update, _, _) = trans2for id t1 in
+      (body', update, (fun t1 t2 t3 -> ForGE(false, x, y, t1, t2, t3)), t2)
+  | Let (x, y, t) ->
+    let (body', update, cond, cont) = trans2for id t in
+    (Let(x, y, body'), update, cond, cont)
+  | Sbst (x, y, t) ->
+    let (body', update, cond, cont) = trans2for id t in
+    (Sbst(x, y, body'), update, cond, cont)
+  | Ans (_) | Break(_) | Continue ->
+    (body, Ans(Nop), (fun t1 t2 t3 -> Ans(Nop)), Ans(Nop))
+  | _ -> failwith "program error(trans2for)"
+
 let rec trans2while fundef =
   let body = trans_t fundef fundef.body true None in
-  let rec loop args = match args with
-    | [] -> While (body, Ans(Nop))
-    | arg::args ->
-      Sbst((arg, Type.Int), Mv(arg), loop args)
-  in
-  let rec loop2 fargs = match fargs with
-    | [] -> loop fundef.args
-    | arg::args ->
-      Sbst((arg, Type.Float), Mv(arg), loop2 args)
-  in
-  let w = loop2 fundef.fargs in
-  {body=w; name=fundef.name; args=fundef.args; fargs=fundef.fargs; ret=fundef.ret}
+  print_t body;
+  print_string "\n";
+  let body = (match check_for_availability fundef with
+  | Some(id) ->
+    Printf.printf "inductive: %s\n" id;
+    let (body, update, cond, cont) = trans2for id body in
+    cond update body cont
+  | None ->
+    let rec loop args = match args with
+      | [] -> While (body, Ans(Nop))
+      | arg::args ->
+        Sbst((arg, Type.Int), Mv(arg), loop args)
+    in
+    let rec loop2 fargs = match fargs with
+      | [] -> loop fundef.args
+      | arg::args ->
+        Sbst((arg, Type.Float), Mv(arg), loop2 args)
+    in
+    let w = loop2 fundef.fargs in
+    w
+  ) in
+    {body=body; name=fundef.name; args=fundef.args; fargs=fundef.fargs; ret=fundef.ret}
 
 let rec trans fundef =
   let id = fundef.name in
@@ -126,7 +216,6 @@ let rec trans fundef =
     trans2while fundef
   else
     fundef
-
 
 let exp_num = ref 0
 
@@ -396,16 +485,16 @@ let rec gen_avail top nodes =
         ) in
       let y = !(node.out_set) <> out_n in
       if y then
-        (print_int node.id;
+        (
+         (*print_int node.id;
          print_string "\n";
          print_node_exps_loop (SEXP.elements out_n);
          print_string "\n";
-         print_node_exps_loop (SEXP.elements !(node.out_set))
+         print_node_exps_loop (SEXP.elements !(node.out_set))*)
         )
       else
         ()
       ;
-      print_string "\n\n";
       node.out_set := out_n;
       iter_nodes xs (changed || x || y)
   in
@@ -417,22 +506,25 @@ let rec gen_avail top nodes =
   in
   loop nodes
 
+
 let rec g e =
   let Prog(l, funs, top) = e in
   let rec loop fundefs = match fundefs with
     | [] -> []
     | fundef::xs ->
       let x = trans fundef in
-      let dummy1 = new_node NNone in
+      (*let dummy1 = new_node NNone in
       let dummy2 = new_node NNone in
       let top = new_node NNone in
       let nodes = gen_cfg x.body dummy1 dummy2 top [top] in
       let _ = gen_avail top nodes in
-      let _ = print_cfg top [] in
-      (trans fundef) :: loop xs
+      let _ = print_cfg top [] in*)
+      x :: loop xs
   in
   let fundefs = loop funs in
   Prog(l, fundefs, top)
+
+
 
 let f e = g e
   (*let Prog(l, funs, top) = g e in

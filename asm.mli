@@ -9,6 +9,8 @@ type t =
   | BIfFEq of Id.t * Id.t * t * t * t
   | BIfFLE of Id.t * Id.t * t * t * t
   | While of t * t
+  | ForLE of bool * Id.t * int * t * t * t (* not / x / const / update loop body / cont *)
+  | ForGE of bool * Id.t * int * t * t * t (* for (;not x < const; update) {loop_body); cont *)
   | Break of Id.t
   | Continue
 and exp =
